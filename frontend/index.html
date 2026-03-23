@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Yahoo vs MEXC Spread Monitor</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         :root {
             --bg: #000100;
@@ -481,12 +481,13 @@
 
         <div class="chart-card">
             <div class="chart-wrap">
-                <canvas id="spreadChart"></canvas>
+                <div id="spreadChart"></div>
             </div>
         </div>
+        <p class="muted">Charts powered by TradingView Lightweight Charts.</p>
     </section>
 </main>
 
-<script src="/assets/app.js"></script>
+<script src="/assets/app.js?v=20260323b"></script>
 </body>
 </html>
