@@ -1,8 +1,8 @@
 const REFRESH_MS = 3000;
 const HISTORY_HOURS = 24;
 const ALERT_COOLDOWN_MS = 30000;
-const MIN_DISPLAY_SPREAD_PCT = 1.5;
-const MAX_DISPLAY_SPREAD_PCT = 50;
+const DEFAULT_MIN_SPREAD_PCT = 0;
+const REQUEST_MAX_SPREAD_PCT = 1000000;
 
 const state = {
     rows: [],
@@ -25,15 +25,13 @@ function getYahooQuoteUrl(symbol) {
 }
 
 const elements = {
-    heroStatus: document.getElementById("heroStatus"),
-    heroStatusSecondary: document.getElementById("heroStatusSecondary"),
     statusText: document.getElementById("statusText"),
     searchInput: document.getElementById("searchInput"),
     minSpreadInput: document.getElementById("minSpreadInput"),
+    maxSpreadInput: document.getElementById("maxSpreadInput"),
     sortSelect: document.getElementById("sortSelect"),
     alertThresholdInput: document.getElementById("alertThresholdInput"),
     soundToggle: document.getElementById("soundToggle"),
-    exportLink: document.getElementById("exportLink"),
     tableBody: document.getElementById("tableBody"),
     detailPanel: document.getElementById("detailPanel"),
     panelEyebrow: document.getElementById("panelEyebrow"),
@@ -123,26 +121,6 @@ function directionBadge(value) {
     return "";
 }
 
-function sourceBadge(source) {
-    if (source === "after-hours") {
-        return '<span class="price-source">После сессии</span>';
-    }
-    if (source === "previous-close") {
-        return '<span class="price-source">Закрытие</span>';
-    }
-    return '<span class="price-source">Рынок</span>';
-}
-
-function sourceText(source) {
-    if (source === "after-hours") {
-        return "после основной сессии";
-    }
-    if (source === "previous-close") {
-        return "предыдущее закрытие";
-    }
-    return "основная сессия";
-}
-
 function ensureAudioContext() {
     if (!state.soundEnabled) {
         return null;
@@ -202,7 +180,9 @@ function updateSummary(payload) {
     const tracked = String(payload.tracked_symbols ?? 0);
     const updated = formatTime(payload.updated_at);
     const maxSpread = formatPercent(payload.max_abs_spread_pct || 0);
-    const rangeText = `Диапазон таблицы ${MIN_DISPLAY_SPREAD_PCT}%-${MAX_DISPLAY_SPREAD_PCT}%.`;
+    const minSpread = getMinSpreadFilterValue();
+    const maxSpreadFilter = getMaxSpreadFilterValue();
+    const rangeText = buildFilterSummaryText(minSpread, maxSpreadFilter);
 
     const errors = payload.errors || {};
     const errorMessages = Object.entries(errors)
@@ -210,24 +190,24 @@ function updateSummary(payload) {
         .map(([key, value]) => `${key}: ${value}`);
 
     if (errorMessages.length) {
-        elements.heroStatus.textContent = `TRACKED ${tracked} | MAX ${maxSpread} | UPDATE ${updated}`;
-        elements.heroStatusSecondary.textContent = `${rangeText} Проблемы источников: ${errorMessages.join(" | ")}`;
-        elements.statusText.textContent = errorMessages.join(" | ");
+        elements.statusText.textContent = `TRACKED ${tracked} | MAX ${maxSpread} | UPDATE ${updated} | ${rangeText} Проблемы источников: ${errorMessages.join(" | ")}`;
         elements.statusText.classList.add("bad");
         return;
     }
 
-    elements.heroStatus.textContent = `TRACKED ${tracked} | MAX ${maxSpread} | UPDATE ${updated}`;
-    elements.heroStatusSecondary.textContent = `${rangeText} Таблица и график обновляются каждые 3 секунды.`;
-    elements.statusText.textContent = `Кнопка "Рынок" открывает Yahoo Finance, кнопка "График" прокручивает к истории выбранного тикера.`;
+    elements.statusText.textContent = `TRACKED ${tracked} | MAX ${maxSpread} | UPDATE ${updated} | ${rangeText} Кнопка "Рынок" открывает Yahoo Finance, кнопка "График" прокручивает к истории выбранного тикера.`;
     elements.statusText.classList.remove("bad");
 }
 
 function renderTable(rows) {
+    const minSpread = getMinSpreadFilterValue();
+    const maxSpread = getMaxSpreadFilterValue();
+    const rangeText = buildFilterLabelText(minSpread, maxSpread);
+
     if (!rows.length) {
         elements.tableBody.innerHTML = `
             <tr>
-                <td colspan="7" class="empty-state">В диапазоне ${MIN_DISPLAY_SPREAD_PCT}%-${MAX_DISPLAY_SPREAD_PCT}% подходящих спредов сейчас нет.</td>
+                <td colspan="7" class="empty-state">Подходящих спредов сейчас нет. Текущий фильтр: ${rangeText}.</td>
             </tr>
         `;
         return;
@@ -248,7 +228,6 @@ function renderTable(rows) {
                 ${formatPrice(row.yahoo_price)}
                 <div class="market-actions">
                     <a class="market-link-btn" href="${getYahooQuoteUrl(row.yahoo_symbol)}" target="_blank" rel="noopener noreferrer">Рынок</a>
-                    ${sourceBadge(row.yahoo_price_source)}
                 </div>
             </td>
             <td class="number">${formatPrice(row.mexc_price)}</td>
@@ -268,7 +247,7 @@ function renderPanelSnapshot(row) {
     }
     elements.panelEyebrow.textContent = `${row.mexc_symbol} / ${row.yahoo_symbol}`;
     elements.panelTitle.textContent = row.symbol;
-    elements.panelSubtitle.textContent = `Источник Yahoo: ${sourceText(row.yahoo_price_source)}. Линейный график ниже показывает историю spread_pct за последние ${HISTORY_HOURS} часа и обновляется каждые ${REFRESH_MS / 1000} секунды.`;
+    elements.panelSubtitle.textContent = `Линейный график ниже показывает историю spread_pct за последние ${HISTORY_HOURS} часа и обновляется каждые ${REFRESH_MS / 1000} секунды.`;
     elements.panelYahoo.textContent = `${formatPrice(row.yahoo_price)} $`;
     elements.panelMexc.textContent = `${formatPrice(row.mexc_price)} $`;
     elements.panelSpreadPct.textContent = formatSpreadPercent(row.spread_pct);
@@ -308,13 +287,18 @@ function renderChart(symbol, points) {
             options: {
                 maintainAspectRatio: false,
                 animation: {
-                    duration: 450,
+                    duration: 180,
                 },
                 interaction: {
                     intersect: false,
                     mode: "index",
                 },
                 plugins: {
+                    decimation: {
+                        enabled: true,
+                        algorithm: "lttb",
+                        samples: 240,
+                    },
                     legend: { display: false },
                     tooltip: {
                         backgroundColor: "#020402",
@@ -406,16 +390,14 @@ async function refreshSelectedHistory(scroll = false) {
 }
 
 async function fetchSnapshot() {
-    const minSpread = Math.max(
-        MIN_DISPLAY_SPREAD_PCT,
-        Number(elements.minSpreadInput.value || MIN_DISPLAY_SPREAD_PCT),
-    );
+    const minSpread = getMinSpreadFilterValue();
+    const maxSpread = getMaxSpreadFilterValue();
 
     const params = new URLSearchParams({
         search: elements.searchInput.value.trim(),
         sort_by: elements.sortSelect.value,
         min_spread_pct: String(minSpread),
-        max_spread_pct: String(MAX_DISPLAY_SPREAD_PCT),
+        max_spread_pct: String(Number.isFinite(maxSpread) ? maxSpread : REQUEST_MAX_SPREAD_PCT),
     });
 
     const response = await fetch(`/api/snapshot?${params.toString()}`);
@@ -451,13 +433,41 @@ async function runRefreshCycle() {
     try {
         await fetchSnapshot();
     } catch (error) {
-        elements.heroStatus.textContent = "Ошибка обновления рынка";
-        elements.heroStatusSecondary.textContent = error.message;
         elements.statusText.textContent = error.message;
         elements.statusText.classList.add("bad");
     } finally {
         state.refreshInFlight = false;
     }
+}
+
+function getMinSpreadFilterValue() {
+    return Math.max(0, Number(elements.minSpreadInput.value || DEFAULT_MIN_SPREAD_PCT));
+}
+
+function getMaxSpreadFilterValue() {
+    const rawValue = elements.maxSpreadInput.value.trim();
+    if (!rawValue) {
+        return Number.POSITIVE_INFINITY;
+    }
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+        return Number.POSITIVE_INFINITY;
+    }
+    return parsed;
+}
+
+function buildFilterSummaryText(minSpread, maxSpread) {
+    if (Number.isFinite(maxSpread)) {
+        return `Фильтр: ${formatPercent(minSpread)} - ${formatPercent(maxSpread)}.`;
+    }
+    return `Фильтр: от ${formatPercent(minSpread)} без верхнего лимита.`;
+}
+
+function buildFilterLabelText(minSpread, maxSpread) {
+    if (Number.isFinite(maxSpread)) {
+        return `${formatPercent(minSpread)}-${formatPercent(maxSpread)}`;
+    }
+    return `от ${formatPercent(minSpread)}`;
 }
 
 function scheduleRefresh() {
@@ -470,9 +480,9 @@ function scheduleRefresh() {
 function initControls() {
     elements.soundToggle.checked = state.soundEnabled;
     elements.alertThresholdInput.value = String(state.alertThreshold);
-    elements.minSpreadInput.value = String(MIN_DISPLAY_SPREAD_PCT);
+    elements.minSpreadInput.value = String(DEFAULT_MIN_SPREAD_PCT);
 
-    [elements.searchInput, elements.minSpreadInput, elements.sortSelect].forEach((element) => {
+    [elements.searchInput, elements.minSpreadInput, elements.maxSpreadInput, elements.sortSelect].forEach((element) => {
         element.addEventListener("input", () => {
             runRefreshCycle().catch(() => {});
         });

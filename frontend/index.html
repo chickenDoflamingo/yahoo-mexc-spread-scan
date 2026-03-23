@@ -56,10 +56,6 @@
             box-shadow: var(--shadow);
         }
 
-        .hero {
-            padding: 10px;
-        }
-
         .eyebrow {
             margin: 0 0 4px;
             color: var(--accent);
@@ -81,9 +77,6 @@
             line-height: 1.05;
         }
 
-        .subtitle,
-        .hero-status,
-        .hero-status-secondary,
         .status-note,
         .muted {
             margin: 6px 0 0;
@@ -91,12 +84,6 @@
             font-size: 13px;
         }
 
-        .hero-status {
-            color: var(--text-strong);
-        }
-
-        .hero-status-secondary,
-        .subtitle,
         .status-note,
         .muted {
             color: var(--muted);
@@ -170,7 +157,6 @@
             accent-color: var(--accent);
         }
 
-        .export-link,
         .action-btn {
             min-height: 34px;
             display: inline-flex;
@@ -185,7 +171,6 @@
             cursor: pointer;
         }
 
-        .export-link:hover,
         .action-btn:hover {
             border-color: var(--line-strong);
             background: var(--accent-soft);
@@ -382,8 +367,7 @@
                 margin: 4px auto;
             }
 
-            .panel,
-            .hero {
+            .panel {
                 padding: 8px;
             }
         }
@@ -391,14 +375,6 @@
 </head>
 <body>
 <main class="app-shell">
-    <section class="panel hero">
-        <p class="eyebrow">TERMINAL / YAHOO:MEXC</p>
-        <h1>SPREAD MONITOR</h1>
-        <p class="subtitle">Таблица и график обновляются каждые 3 секунды. Показываем только аномальные отклонения в диапазоне 1.5%-50%.</p>
-        <p class="hero-status" id="heroStatus">Ожидание первого снимка рынка...</p>
-        <p class="hero-status-secondary" id="heroStatusSecondary">Тикер открывает контракт MEXC. Кнопка "Рынок" открывает Yahoo Finance. Кнопка "График" прокручивает к нижнему графику.</p>
-    </section>
-
     <section class="panel controls">
         <div class="control">
             <label for="searchInput">Поиск</label>
@@ -406,13 +382,17 @@
         </div>
         <div class="control">
             <label for="minSpreadInput">Мин. |спред| %</label>
-            <input id="minSpreadInput" type="number" min="1.5" step="0.1" value="1.5">
+            <input id="minSpreadInput" type="number" min="0" step="0.1" value="0">
+        </div>
+        <div class="control">
+            <label for="maxSpreadInput">Макс. |спред| %</label>
+            <input id="maxSpreadInput" type="number" min="0" step="0.1" placeholder="без лимита">
         </div>
         <div class="control">
             <label for="sortSelect">Сортировка</label>
             <select id="sortSelect">
-                <option value="spread_desc">По убыванию</option>
-                <option value="spread_asc">По возрастанию</option>
+                <option value="spread_desc">Спред % ↓</option>
+                <option value="spread_asc">Спред % ↑</option>
             </select>
         </div>
         <div class="control">
@@ -426,17 +406,13 @@
                 <span>ALERT</span>
             </label>
         </div>
-        <div class="control">
-            <label>Экспорт</label>
-            <a id="exportLink" class="export-link" href="/api/export.csv?hours=24">CSV</a>
-        </div>
     </section>
 
     <section class="panel">
         <div class="section-header">
             <div>
                 <h2>ТАБЛИЦА СПРЕДОВ</h2>
-                <p class="status-note" id="statusText">Фильтр таблицы: 1.5%-50%. Кнопка "Рынок" ведёт на Yahoo Finance, "График" открывает историю спреда внизу.</p>
+                <p class="status-note" id="statusText">Ожидание первого снимка рынка...</p>
             </div>
         </div>
         <div class="table-wrap">

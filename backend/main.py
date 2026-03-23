@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
-import io
 import logging
 import os
 import secrets
@@ -14,7 +13,7 @@ from typing import Any
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .matcher import match_symbols
@@ -27,15 +26,18 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
 
 MEXC_REFRESH_SECONDS = 3
-YAHOO_REFRESH_SECONDS = 3
+YAHOO_REFRESH_SECONDS = 15
 REMATCH_INTERVAL = timedelta(minutes=15)
-DEFAULT_MIN_SPREAD_PCT = 1.5
-DEFAULT_MAX_SPREAD_PCT = 50.0
+DEFAULT_MIN_SPREAD_PCT = 0.0
+DEFAULT_MAX_SPREAD_PCT = 1_000_000.0
 SUPPORTED_CANDLE_INTERVALS = {5, 15, 60}
 PUBLIC_BASIC_AUTH_USER = os.getenv("PUBLIC_BASIC_AUTH_USER", "")
 PUBLIC_BASIC_AUTH_PASSWORD = os.getenv("PUBLIC_BASIC_AUTH_PASSWORD", "")
@@ -132,6 +134,7 @@ class SpreadMonitor:
         self._updated_at: str | None = None
         self._last_yahoo_refresh_at: datetime | None = None
         self._last_match_at: datetime | None = None
+        self._yahoo_refresh_task: asyncio.Task[None] | None = None
         self._errors = {"mexc": None, "yahoo": None}
 
     async def start(self) -> None:
@@ -144,6 +147,10 @@ class SpreadMonitor:
             self._task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._task
+        if self._yahoo_refresh_task is not None:
+            self._yahoo_refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._yahoo_refresh_task
         await self.mexc.close()
 
     async def _run_loop(self) -> None:
@@ -227,6 +234,37 @@ class SpreadMonitor:
         ).drop(columns=["abs_spread_pct"])
         return _frame_to_records(frame)
 
+    async def _refresh_yahoo_once(self, yahoo_symbols: list[str]) -> None:
+        try:
+            await self.yahoo.refresh_prices(yahoo_symbols)
+            self._last_yahoo_refresh_at = _utcnow()
+            self._errors["yahoo"] = None
+        except Exception as exc:
+            self._errors["yahoo"] = str(exc)
+            logger.warning("Yahoo refresh failed, using cached values: %s", exc)
+
+    def _should_refresh_yahoo(self, now: datetime) -> bool:
+        if self._last_yahoo_refresh_at is None:
+            return True
+        return now - self._last_yahoo_refresh_at >= timedelta(seconds=YAHOO_REFRESH_SECONDS)
+
+    def _start_yahoo_refresh_task(self, yahoo_symbols: list[str]) -> None:
+        if not yahoo_symbols:
+            return
+        if self._yahoo_refresh_task is not None and not self._yahoo_refresh_task.done():
+            return
+
+        async def runner() -> None:
+            try:
+                await self._refresh_yahoo_once(yahoo_symbols)
+            finally:
+                self._yahoo_refresh_task = None
+
+        self._yahoo_refresh_task = asyncio.create_task(
+            runner(),
+            name="spread-monitor-yahoo-refresh",
+        )
+
     async def refresh_once(self) -> None:
         try:
             contracts = await self.mexc.get_all_symbols()
@@ -250,17 +288,11 @@ class SpreadMonitor:
                 logger.warning("Symbol matching failed: %s", exc)
 
         yahoo_symbols = sorted({row["yahoo_symbol"] for row in self._matches})
-        if yahoo_symbols and (
-            self._last_yahoo_refresh_at is None
-            or now - self._last_yahoo_refresh_at >= timedelta(seconds=YAHOO_REFRESH_SECONDS)
-        ):
-            try:
-                await self.yahoo.refresh_prices(yahoo_symbols)
-                self._last_yahoo_refresh_at = now
-                self._errors["yahoo"] = None
-            except Exception as exc:
-                self._errors["yahoo"] = str(exc)
-                logger.warning("Yahoo refresh failed, using cached values: %s", exc)
+        missing_cache = any(self.yahoo.get_cached_price(symbol) is None for symbol in yahoo_symbols)
+        if yahoo_symbols and missing_cache and self._last_yahoo_refresh_at is None:
+            await self._refresh_yahoo_once(yahoo_symbols)
+        elif yahoo_symbols and self._should_refresh_yahoo(now):
+            self._start_yahoo_refresh_task(yahoo_symbols)
 
         rows = self._build_rows()
         if rows:
@@ -274,9 +306,10 @@ class SpreadMonitor:
         if frame.empty:
             return frame
 
+        sort_column = "abs_spread_pct" if "abs_spread_pct" in frame.columns else "spread_pct"
         if sort_by == "spread_asc":
-            return frame.sort_values(by="spread_pct", ascending=True)
-        return frame.sort_values(by="spread_pct", ascending=False)
+            return frame.sort_values(by=[sort_column, "symbol"], ascending=[True, True])
+        return frame.sort_values(by=[sort_column, "symbol"], ascending=[False, True])
 
     async def snapshot_payload(
         self,
@@ -340,9 +373,6 @@ class SpreadMonitor:
             "interval_minutes": interval_minutes,
             "candles": points,
         }
-
-    async def export_csv(self, hours: int) -> str:
-        return await self.storage.export_recent_csv(hours=hours)
 
     async def yahoo_quotes_payload(self, symbols: list[str]) -> dict[str, Any]:
         clean_symbols = sorted({str(symbol).upper().strip() for symbol in symbols if str(symbol).strip()})
@@ -516,13 +546,3 @@ async def candles(
     if not payload["candles"]:
         raise HTTPException(status_code=404, detail="Свечи для символа пока не накоплены")
     return payload
-
-
-@app.get("/api/export.csv")
-async def export_csv(hours: int = Query(default=24, ge=1, le=168)) -> StreamingResponse:
-    csv_data = await monitor.export_csv(hours=hours)
-    return StreamingResponse(
-        io.BytesIO(csv_data.encode("utf-8")),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="spread_history.csv"'},
-    )
