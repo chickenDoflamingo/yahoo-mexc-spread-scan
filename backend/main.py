@@ -353,6 +353,8 @@ app.mount("/assets", StaticFiles(directory=FRONTEND_DIR), name="assets")
 
 @app.middleware("http")
 async def public_basic_auth(request: Request, call_next):
+    if request.url.path == "/api/health":
+        return await call_next(request)
     if not _public_auth_enabled():
         return await call_next(request)
     if _is_authorized(request.headers.get("authorization")):
