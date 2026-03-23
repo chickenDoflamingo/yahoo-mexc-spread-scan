@@ -286,18 +286,6 @@
             color: var(--text-strong);
         }
 
-        .price-source {
-            display: inline-flex;
-            align-items: center;
-            min-height: 22px;
-            padding: 2px 8px;
-            border: 1px solid rgba(78, 255, 120, 0.12);
-            border-radius: 2px;
-            color: var(--muted);
-            font-size: 11px;
-            text-transform: uppercase;
-        }
-
         .number {
             color: var(--text-strong);
         }
@@ -314,6 +302,22 @@
             align-items: flex-start;
             gap: 12px;
             margin-bottom: 8px;
+        }
+
+        .graph-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 8px;
+        }
+
+        .graph-help {
+            margin: 0;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.5;
         }
 
         .graph-meta {
@@ -349,11 +353,16 @@
             border-radius: 2px;
             background: var(--panel-strong);
             padding: 6px;
+            min-height: 420px;
+            height: 480px;
+            resize: vertical;
+            overflow: auto;
         }
 
         .chart-wrap {
             position: relative;
-            min-height: 360px;
+            height: 100%;
+            min-height: 400px;
         }
 
         @media (max-width: 1100px) {
@@ -444,6 +453,11 @@
                 <h3 id="panelTitle">Выбери тикер из таблицы</h3>
                 <p class="muted" id="panelSubtitle">График строится по локально сохранённой истории spread_pct за последние 24 часа и автоматически обновляется каждые 3 секунды.</p>
             </div>
+        </div>
+
+        <div class="graph-toolbar">
+            <button class="action-btn" id="resetZoomBtn" type="button">Сбросить масштаб</button>
+            <p class="graph-help">Колесо мыши: масштаб. Зажми левую кнопку и тяни: сдвиг графика. Потяни нижний край блока: изменить высоту.</p>
         </div>
 
         <div class="graph-meta">
