@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yahoo vs MEXC Spread Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg: #000100;
+            --panel: #020402;
+            --panel-strong: #010201;
+            --text: #d0ffd0;
+            --text-strong: #f4fff4;
+            --muted: #6ea56e;
+            --line: rgba(78, 255, 120, 0.14);
+            --line-strong: rgba(78, 255, 120, 0.36);
+            --accent: #4eff78;
+            --accent-soft: rgba(78, 255, 120, 0.09);
+            --danger: #ff6262;
+            --shadow: none;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            color-scheme: dark;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "JetBrains Mono", "SFMono-Regular", "Menlo", monospace;
+            color: var(--text);
+            background:
+                linear-gradient(rgba(78, 255, 120, 0.015) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(78, 255, 120, 0.015) 1px, transparent 1px),
+                var(--bg);
+            background-size: 14px 14px, 14px 14px, auto;
+        }
+
+        .app-shell {
+            width: min(1600px, calc(100vw - 12px));
+            margin: 6px auto;
+            display: grid;
+            gap: 6px;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 2px;
+            padding: 10px;
+            box-shadow: var(--shadow);
+        }
+
+        .hero {
+            padding: 10px;
+        }
+
+        .eyebrow {
+            margin: 0 0 4px;
+            color: var(--accent);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        h1,
+        h2,
+        h3 {
+            margin: 0;
+            color: var(--text-strong);
+            font-weight: 700;
+        }
+
+        h1 {
+            font-size: clamp(22px, 4vw, 34px);
+            line-height: 1.05;
+        }
+
+        .subtitle,
+        .hero-status,
+        .hero-status-secondary,
+        .status-note,
+        .muted {
+            margin: 6px 0 0;
+            line-height: 1.5;
+            font-size: 13px;
+        }
+
+        .hero-status {
+            color: var(--text-strong);
+        }
+
+        .hero-status-secondary,
+        .subtitle,
+        .status-note,
+        .muted {
+            color: var(--muted);
+        }
+
+        .status-note.bad {
+            color: var(--danger);
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+            gap: 6px;
+            align-items: end;
+        }
+
+        .control {
+            display: grid;
+            gap: 4px;
+        }
+
+        .control label,
+        .toggle-label {
+            color: var(--accent);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        input,
+        select,
+        button,
+        a {
+            font: inherit;
+        }
+
+        input,
+        select {
+            width: 100%;
+            min-height: 34px;
+            padding: 6px 8px;
+            border: 1px solid var(--line);
+            border-radius: 2px;
+            background: #010201;
+            color: var(--text-strong);
+            outline: none;
+        }
+
+        input:focus,
+        select:focus {
+            border-color: var(--line-strong);
+            background: #020402;
+        }
+
+        .toggle {
+            min-height: 34px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border: 1px solid var(--line);
+            border-radius: 2px;
+            background: #010201;
+            color: var(--text);
+        }
+
+        .toggle input {
+            width: 14px;
+            height: 14px;
+            margin: 0;
+            accent-color: var(--accent);
+        }
+
+        .export-link,
+        .action-btn {
+            min-height: 34px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px 10px;
+            border: 1px solid var(--line);
+            border-radius: 2px;
+            background: #010201;
+            color: var(--accent);
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .export-link:hover,
+        .action-btn:hover {
+            border-color: var(--line-strong);
+            background: var(--accent-soft);
+            color: var(--text-strong);
+        }
+
+        .table-wrap {
+            overflow: auto;
+            border: 1px solid var(--line);
+            border-radius: 2px;
+            background: var(--panel-strong);
+        }
+
+        table {
+            width: 100%;
+            min-width: 1080px;
+            border-collapse: collapse;
+        }
+
+        thead th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: #010201;
+            color: var(--accent);
+            text-align: left;
+            padding: 8px 10px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            border-bottom: 1px solid var(--line);
+        }
+
+        tbody td {
+            padding: 8px 10px;
+            border-top: 1px solid rgba(78, 255, 120, 0.08);
+            vertical-align: top;
+        }
+
+        tbody tr:hover {
+            background: rgba(78, 255, 120, 0.05);
+        }
+
+        .symbol-row {
+            display: grid;
+            gap: 6px;
+        }
+
+        .symbol-link,
+        .symbol-sub-link {
+            color: var(--text-strong);
+            text-decoration: none;
+        }
+
+        .symbol-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 700;
+        }
+
+        .symbol-link:hover,
+        .symbol-sub-link:hover {
+            color: var(--accent);
+        }
+
+        .symbol-meta,
+        .market-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .symbol-sub {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .symbol-direction {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 12px;
+        }
+
+        .symbol-direction-long {
+            color: var(--accent);
+        }
+
+        .symbol-direction-short {
+            color: var(--danger);
+        }
+
+        .market-link-btn,
+        .symbol-chart-btn {
+            min-height: 22px;
+            padding: 2px 8px;
+            border: 1px solid var(--line);
+            border-radius: 2px;
+            background: transparent;
+            color: var(--accent);
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+        }
+
+        .market-link-btn:hover,
+        .symbol-chart-btn:hover {
+            border-color: var(--line-strong);
+            background: var(--accent-soft);
+            color: var(--text-strong);
+        }
+
+        .price-source {
+            display: inline-flex;
+            align-items: center;
+            min-height: 22px;
+            padding: 2px 8px;
+            border: 1px solid rgba(78, 255, 120, 0.12);
+            border-radius: 2px;
+            color: var(--muted);
+            font-size: 11px;
+            text-transform: uppercase;
+        }
+
+        .number {
+            color: var(--text-strong);
+        }
+
+        .empty-state {
+            padding: 28px 12px;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        .graph-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .graph-meta {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 6px;
+            margin-bottom: 8px;
+        }
+
+        .metric {
+            border: 1px solid var(--line);
+            border-radius: 2px;
+            padding: 6px 8px;
+            background: var(--panel-strong);
+        }
+
+        .metric-label {
+            display: block;
+            color: var(--muted);
+            font-size: 11px;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .metric-value {
+            display: block;
+            color: var(--text-strong);
+            font-size: 14px;
+        }
+
+        .chart-card {
+            border: 1px solid var(--line);
+            border-radius: 2px;
+            background: var(--panel-strong);
+            padding: 6px;
+        }
+
+        .chart-wrap {
+            position: relative;
+            min-height: 360px;
+        }
+
+        @media (max-width: 1100px) {
+            .controls,
+            .graph-meta {
+                grid-template-columns: 1fr;
+            }
+
+            .app-shell {
+                width: min(100vw - 8px, 100%);
+                margin: 4px auto;
+            }
+
+            .panel,
+            .hero {
+                padding: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+<main class="app-shell">
+    <section class="panel hero">
+        <p class="eyebrow">TERMINAL / YAHOO:MEXC</p>
+        <h1>SPREAD MONITOR</h1>
+        <p class="subtitle">Таблица и график обновляются каждые 3 секунды. Показываем только аномальные отклонения в диапазоне 1.5%-50%.</p>
+        <p class="hero-status" id="heroStatus">Ожидание первого снимка рынка...</p>
+        <p class="hero-status-secondary" id="heroStatusSecondary">Тикер открывает контракт MEXC. Кнопка "Рынок" открывает Yahoo Finance. Кнопка "График" прокручивает к нижнему графику.</p>
+    </section>
+
+    <section class="panel controls">
+        <div class="control">
+            <label for="searchInput">Поиск</label>
+            <input id="searchInput" type="text" placeholder="AAPL / TSLA / NVDA">
+        </div>
+        <div class="control">
+            <label for="minSpreadInput">Мин. |спред| %</label>
+            <input id="minSpreadInput" type="number" min="1.5" step="0.1" value="1.5">
+        </div>
+        <div class="control">
+            <label for="sortSelect">Сортировка</label>
+            <select id="sortSelect">
+                <option value="spread_desc">По убыванию</option>
+                <option value="spread_asc">По возрастанию</option>
+            </select>
+        </div>
+        <div class="control">
+            <label for="alertThresholdInput">Порог сигнала %</label>
+            <input id="alertThresholdInput" type="number" min="0.1" step="0.1" value="2">
+        </div>
+        <div class="control">
+            <span class="toggle-label">Звук</span>
+            <label class="toggle" for="soundToggle">
+                <input id="soundToggle" type="checkbox">
+                <span>ALERT</span>
+            </label>
+        </div>
+        <div class="control">
+            <label>Экспорт</label>
+            <a id="exportLink" class="export-link" href="/api/export.csv?hours=24">CSV</a>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="section-header">
+            <div>
+                <h2>ТАБЛИЦА СПРЕДОВ</h2>
+                <p class="status-note" id="statusText">Фильтр таблицы: 1.5%-50%. Кнопка "Рынок" ведёт на Yahoo Finance, "График" открывает историю спреда внизу.</p>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>Символ</th>
+                    <th>Yahoo</th>
+                    <th>MEXC</th>
+                    <th>Mark</th>
+                    <th>Funding</th>
+                    <th>Спред ($)</th>
+                    <th>Спред (%)</th>
+                </tr>
+                </thead>
+                <tbody id="tableBody">
+                <tr>
+                    <td colspan="7" class="empty-state">Загрузка данных...</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="panel" id="detailPanel">
+        <div class="graph-head">
+            <div>
+                <p class="eyebrow" id="panelEyebrow">SPREAD GRAPH</p>
+                <h3 id="panelTitle">Выбери тикер из таблицы</h3>
+                <p class="muted" id="panelSubtitle">График строится по локально сохранённой истории spread_pct за последние 24 часа и автоматически обновляется каждые 3 секунды.</p>
+            </div>
+        </div>
+
+        <div class="graph-meta">
+            <div class="metric">
+                <span class="metric-label">Yahoo</span>
+                <strong class="metric-value" id="panelYahoo">-</strong>
+            </div>
+            <div class="metric">
+                <span class="metric-label">MEXC</span>
+                <strong class="metric-value" id="panelMexc">-</strong>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Спред %</span>
+                <strong class="metric-value" id="panelSpreadPct">-</strong>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Funding</span>
+                <strong class="metric-value" id="panelFunding">-</strong>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-wrap">
+                <canvas id="spreadChart"></canvas>
+            </div>
+        </div>
+    </section>
+</main>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>

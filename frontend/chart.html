@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Свечной график спреда</title>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        :root {
+            --bg: #06080d;
+            --panel: rgba(11, 15, 23, 0.94);
+            --text: #edf3ff;
+            --muted: #8d9ab0;
+            --line: rgba(133, 150, 179, 0.16);
+            --grid: rgba(84, 101, 129, 0.08);
+            --accent: #31c48d;
+            --accent-soft: rgba(49, 196, 141, 0.12);
+            --red: #f87171;
+            --shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            color-scheme: dark;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(49, 196, 141, 0.16), transparent 22%),
+                radial-gradient(circle at top right, rgba(59, 130, 246, 0.14), transparent 24%),
+                linear-gradient(180deg, #05070b 0%, #090c12 38%, #05070b 100%);
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(var(--grid) 1px, transparent 1px),
+                linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+            background-size: 36px 36px;
+            mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.35), transparent 90%);
+        }
+
+        .shell {
+            width: min(1440px, calc(100vw - 32px));
+            margin: 24px auto 32px;
+            display: grid;
+            gap: 18px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .card {
+            background: var(--panel);
+            backdrop-filter: blur(18px);
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            box-shadow: var(--shadow);
+        }
+
+        .hero {
+            padding: 28px;
+            background:
+                linear-gradient(160deg, rgba(13, 19, 28, 0.98), rgba(8, 12, 19, 0.94)),
+                radial-gradient(circle at right top, rgba(49, 196, 141, 0.08), transparent 30%);
+        }
+
+        .eyebrow {
+            margin: 0 0 10px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--accent);
+        }
+
+        h1 {
+            margin: 0;
+            font-size: clamp(28px, 4.5vw, 46px);
+            line-height: 0.95;
+            letter-spacing: -0.04em;
+        }
+
+        .subtitle {
+            margin: 14px 0 0;
+            max-width: 820px;
+            color: var(--muted);
+            font-size: 15px;
+            line-height: 1.7;
+        }
+
+        .hero-links {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 18px;
+        }
+
+        .hero-link,
+        .interval-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 38px;
+            padding: 0 14px;
+            border-radius: 999px;
+            border: 1px solid rgba(133, 150, 179, 0.18);
+            background: rgba(133, 150, 179, 0.08);
+            color: var(--text);
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            cursor: pointer;
+        }
+
+        .hero-link:hover,
+        .interval-btn:hover {
+            border-color: rgba(49, 196, 141, 0.3);
+            color: var(--accent);
+        }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 18px 22px;
+        }
+
+        .intervals {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .interval-btn.active {
+            background: rgba(49, 196, 141, 0.14);
+            border-color: rgba(49, 196, 141, 0.35);
+            color: var(--accent);
+        }
+
+        .controls-text {
+            color: var(--muted);
+            font-size: 14px;
+            text-align: right;
+        }
+
+        .stats {
+            display: grid;
+            gap: 12px;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            padding: 0 22px 22px;
+        }
+
+        .stat {
+            padding: 16px;
+            border-radius: 14px;
+            background: rgba(13, 19, 28, 0.98);
+            border: 1px solid var(--line);
+        }
+
+        .stat-label {
+            display: block;
+            color: var(--muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .stat-value {
+            display: block;
+            margin-top: 8px;
+            font-size: 22px;
+            letter-spacing: -0.03em;
+            font-family: "JetBrains Mono", "SFMono-Regular", "Menlo", monospace;
+        }
+
+        .chart-card {
+            padding: 18px;
+        }
+
+        #chartContainer {
+            width: 100%;
+            height: 600px;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid var(--line);
+            background: rgba(9, 13, 20, 0.98);
+        }
+
+        .status-box {
+            padding: 18px 22px;
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.7;
+        }
+
+        .status-box.bad {
+            color: var(--red);
+        }
+
+        @media (max-width: 980px) {
+            .shell {
+                width: min(100vw - 20px, 100%);
+                margin: 10px auto 24px;
+            }
+
+            .hero,
+            .controls,
+            .chart-card {
+                padding: 16px;
+            }
+
+            .controls {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .controls-text {
+                text-align: left;
+            }
+
+            .stats {
+                grid-template-columns: 1fr 1fr;
+                padding: 0 16px 16px;
+            }
+
+            #chartContainer {
+                height: 420px;
+            }
+        }
+    </style>
+</head>
+<body>
+<main class="shell">
+    <section class="hero card">
+        <p class="eyebrow">Spread Candles</p>
+        <h1 id="pageTitle">Свечной график спреда</h1>
+        <p class="subtitle" id="pageSubtitle">
+            Свечи строятся не по биржевым OHLC от Yahoo, а по нашему локально накопленному `spread_pct`.
+            Каждые 5 секунд сервис сохраняет снимок, а здесь мы агрегируем его в 5м, 15м и 1ч свечи.
+        </p>
+        <div class="hero-links">
+            <a class="hero-link" href="/">К таблице</a>
+            <a class="hero-link" id="mexcLink" href="#" target="_blank" rel="noreferrer">MEXC</a>
+            <a class="hero-link" id="yahooLink" href="#" target="_blank" rel="noreferrer">Yahoo Finance</a>
+        </div>
+    </section>
+
+    <section class="card">
+        <div class="controls">
+            <div class="intervals">
+                <button class="interval-btn" data-interval="5" type="button">5м</button>
+                <button class="interval-btn" data-interval="15" type="button">15м</button>
+                <button class="interval-btn" data-interval="60" type="button">1ч</button>
+            </div>
+            <div class="controls-text" id="controlsText">Последние 24 часа истории spread_pct.</div>
+        </div>
+        <div class="stats">
+            <div class="stat">
+                <span class="stat-label">Открытие</span>
+                <strong class="stat-value" id="statOpen">-</strong>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Максимум</span>
+                <strong class="stat-value" id="statHigh">-</strong>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Минимум</span>
+                <strong class="stat-value" id="statLow">-</strong>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Закрытие</span>
+                <strong class="stat-value" id="statClose">-</strong>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Свечей</span>
+                <strong class="stat-value" id="statCount">-</strong>
+            </div>
+        </div>
+    </section>
+
+    <section class="chart-card card">
+        <div id="chartContainer"></div>
+    </section>
+
+    <section class="status-box card" id="statusBox">
+        Готовлю данные графика...
+    </section>
+</main>
+
+<script src="/assets/chart.js"></script>
+</body>
+</html>
