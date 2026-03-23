@@ -52,11 +52,14 @@ http://127.0.0.1:8000/
 
 ## Публичный доступ через Render
 
-Для стабильной ссылки удобнее использовать Render. В проект уже добавлены:
+Для стабильной ссылки удобнее использовать Render. В текущей схеме Render используется как публичная витрина, а локальный Mac может выступать источником данных для MEXC, если MEXC режет облачные IP и отдаёт `403`.
+
+В проект уже добавлены:
 
 - [render.yaml](/Users/mac/PycharmProjects/education/prog education/pandas education/render.yaml) с web service конфигом;
 - [.python-version](/Users/mac/PycharmProjects/education/prog education/pandas education/.python-version) для Python `3.11.11`;
-- переменная `SPREAD_MONITOR_DB_PATH`, чтобы путь к SQLite можно было задавать через окружение.
+- переменная `SPREAD_MONITOR_DB_PATH`, чтобы путь к SQLite можно было задавать через окружение;
+- ingest endpoint и feeder-скрипт [push_remote_snapshot.py](/Users/mac/PycharmProjects/education/prog education/pandas education/scripts/push_remote_snapshot.py).
 
 Базовый сценарий:
 
@@ -76,16 +79,35 @@ Start Command: python3 -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT
 SPREAD_MONITOR_DB_PATH=/tmp/spread-monitor.db
 PUBLIC_BASIC_AUTH_USER=ваш_логин
 PUBLIC_BASIC_AUTH_PASSWORD=ваш_пароль
+PUBLIC_INGEST_TOKEN=длинный_секрет_для_feeder_скрипта
 ```
 
-Если разворачивать через `Blueprint`, `render.yaml` уже содержит поля `PUBLIC_BASIC_AUTH_USER` и `PUBLIC_BASIC_AUTH_PASSWORD`, и Render сам попросит их заполнить.
+Если разворачивать через `Blueprint`, `render.yaml` уже содержит поля `PUBLIC_BASIC_AUTH_USER`, `PUBLIC_BASIC_AUTH_PASSWORD` и `PUBLIC_INGEST_TOKEN`, и Render сам попросит их заполнить.
 
 После деплоя Render выдаст публичный URL вида `https://<service>.onrender.com`.
+
+### Как кормить Render данными с локального Mac
+
+Если публичный Render-сервис получает `403` от MEXC, запускайте feeder локально на Mac:
+
+```bash
+cd "/Users/mac/PycharmProjects/education/prog education/pandas education"
+export REMOTE_BASE_URL="https://<service>.onrender.com"
+export PUBLIC_INGEST_TOKEN="тот_же_секрет_что_в_Render"
+python3 scripts/push_remote_snapshot.py
+```
+
+Feeder будет каждые 3 секунды:
+
+- забирать MEXC и Yahoo локально;
+- считать спреды;
+- отправлять свежий snapshot и историю на Render через `/api/ingest/snapshot`.
 
 Важно:
 
 - на бесплатном плане сервис может "засыпать", поэтому мониторинг не будет полностью непрерывным;
 - SQLite в бесплатном режиме будет жить во временной файловой системе, история может сбрасываться после рестарта;
+- если feeder не запущен, публичный сайт останется доступным, но данные обновляться не будут;
 - если нужна сохранность истории, лучше перейти на платный инстанс и вынести базу на persistent disk или отдельную БД.
 
 ## Публичный доступ через Cloudflare Tunnel

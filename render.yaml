@@ -11,7 +11,11 @@ services:
         value: 3.11.11
       - key: SPREAD_MONITOR_DB_PATH
         value: /tmp/spread-monitor.db
+      - key: INGEST_ONLY_MODE
+        value: "1"
       - key: PUBLIC_BASIC_AUTH_USER
         sync: false
       - key: PUBLIC_BASIC_AUTH_PASSWORD
+        sync: false
+      - key: PUBLIC_INGEST_TOKEN
         sync: false

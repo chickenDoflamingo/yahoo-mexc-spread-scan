@@ -39,6 +39,8 @@ DEFAULT_MAX_SPREAD_PCT = 50.0
 SUPPORTED_CANDLE_INTERVALS = {5, 15, 60}
 PUBLIC_BASIC_AUTH_USER = os.getenv("PUBLIC_BASIC_AUTH_USER", "")
 PUBLIC_BASIC_AUTH_PASSWORD = os.getenv("PUBLIC_BASIC_AUTH_PASSWORD", "")
+PUBLIC_INGEST_TOKEN = os.getenv("PUBLIC_INGEST_TOKEN", "")
+INGEST_ONLY_MODE = os.getenv("INGEST_ONLY_MODE", "0").lower() in {"1", "true", "yes", "on"}
 
 
 def _database_path() -> Path:
@@ -109,6 +111,13 @@ def _unauthorized_response() -> Response:
     )
 
 
+def _ingest_authorized(request: Request) -> bool:
+    if not PUBLIC_INGEST_TOKEN:
+        return False
+    token = request.headers.get("x-ingest-token", "")
+    return secrets.compare_digest(token, PUBLIC_INGEST_TOKEN)
+
+
 class SpreadMonitor:
     def __init__(self) -> None:
         self.mexc = MexcClient()
@@ -118,6 +127,7 @@ class SpreadMonitor:
         self._lock = asyncio.Lock()
         self._snapshot_rows: list[dict[str, Any]] = []
         self._matches: list[dict[str, Any]] = []
+        self._tracked_symbols = 0
         self._contracts_by_symbol: dict[str, dict[str, Any]] = {}
         self._updated_at: str | None = None
         self._last_yahoo_refresh_at: datetime | None = None
@@ -126,7 +136,8 @@ class SpreadMonitor:
 
     async def start(self) -> None:
         await self.storage.initialize()
-        self._task = asyncio.create_task(self._run_loop(), name="spread-monitor")
+        if not INGEST_ONLY_MODE:
+            self._task = asyncio.create_task(self._run_loop(), name="spread-monitor")
 
     async def close(self) -> None:
         if self._task is not None:
@@ -234,6 +245,7 @@ class SpreadMonitor:
             try:
                 self._matches = await match_symbols(contracts, self.yahoo)
                 self._last_match_at = now
+                self._tracked_symbols = len(self._matches)
             except Exception as exc:
                 logger.warning("Symbol matching failed: %s", exc)
 
@@ -277,7 +289,7 @@ class SpreadMonitor:
             rows = list(self._snapshot_rows)
             updated_at = self._updated_at
             errors = dict(self._errors)
-            tracked_symbols = len(self._matches)
+            tracked_symbols = self._tracked_symbols
 
         frame = pd.DataFrame(rows)
         if not frame.empty:
@@ -332,6 +344,73 @@ class SpreadMonitor:
     async def export_csv(self, hours: int) -> str:
         return await self.storage.export_recent_csv(hours=hours)
 
+    async def yahoo_quotes_payload(self, symbols: list[str]) -> dict[str, Any]:
+        clean_symbols = sorted({str(symbol).upper().strip() for symbol in symbols if str(symbol).strip()})
+        if not clean_symbols:
+            return {"updated_at": _utcnow().isoformat(), "quotes": {}}
+
+        should_refresh = any(self.yahoo.get_cached_price(symbol) is None for symbol in clean_symbols)
+        now = _utcnow()
+        if should_refresh or self._last_yahoo_refresh_at is None or now - self._last_yahoo_refresh_at >= timedelta(seconds=YAHOO_REFRESH_SECONDS):
+            try:
+                await self.yahoo.refresh_prices(clean_symbols, force_metadata=should_refresh)
+                self._last_yahoo_refresh_at = _utcnow()
+                self._errors["yahoo"] = None
+            except Exception as exc:
+                self._errors["yahoo"] = str(exc)
+                logger.warning("Yahoo quote endpoint refresh failed, using cached values: %s", exc)
+
+        quotes = {
+            symbol: self.yahoo.get_cached_price(symbol)
+            for symbol in clean_symbols
+            if self.yahoo.get_cached_price(symbol)
+        }
+        return {
+            "updated_at": _utcnow().isoformat(),
+            "quotes": quotes,
+            "errors": {"yahoo": self._errors.get("yahoo")},
+        }
+
+    async def ingest_snapshot_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        rows = payload.get("rows") or []
+        if not isinstance(rows, list):
+            raise HTTPException(status_code=400, detail="rows must be a list")
+
+        clean_rows: list[dict[str, Any]] = []
+        default_timestamp = str(payload.get("updated_at") or _utcnow().isoformat())
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            mexc_symbol = row.get("mexc_symbol")
+            yahoo_symbol = row.get("yahoo_symbol")
+            symbol = row.get("symbol")
+            if not mexc_symbol or not yahoo_symbol or not symbol:
+                continue
+
+            normalized = dict(row)
+            normalized["recorded_at"] = str(row.get("recorded_at") or default_timestamp)
+            normalized["updated_at"] = str(row.get("updated_at") or default_timestamp)
+            clean_rows.append(normalized)
+
+        if clean_rows:
+            await self.storage.save_prices(clean_rows)
+
+        incoming_errors = payload.get("errors") if isinstance(payload.get("errors"), dict) else {}
+        async with self._lock:
+            self._snapshot_rows = clean_rows
+            self._updated_at = default_timestamp
+            self._tracked_symbols = int(payload.get("tracked_symbols") or len(clean_rows))
+            self._errors = {
+                "mexc": incoming_errors.get("mexc"),
+                "yahoo": incoming_errors.get("yahoo"),
+            }
+
+        return {
+            "status": "ok",
+            "rows": len(clean_rows),
+            "updated_at": default_timestamp,
+        }
+
 
 monitor = SpreadMonitor()
 
@@ -353,7 +432,7 @@ app.mount("/assets", StaticFiles(directory=FRONTEND_DIR), name="assets")
 
 @app.middleware("http")
 async def public_basic_auth(request: Request, call_next):
-    if request.url.path == "/api/health":
+    if request.url.path == "/api/health" or request.url.path.startswith("/api/ingest/"):
         return await call_next(request)
     if not _public_auth_enabled():
         return await call_next(request)
@@ -374,7 +453,11 @@ async def chart_page() -> FileResponse:
 
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
-    return {"status": "ok", "updated_at": monitor._updated_at}
+    return {
+        "status": "ok",
+        "updated_at": monitor._updated_at,
+        "ingest_only_mode": INGEST_ONLY_MODE,
+    }
 
 
 @app.get("/api/snapshot")
@@ -390,6 +473,21 @@ async def snapshot(
         search=search,
         sort_by=sort_by,
     )
+
+
+@app.post("/api/yahoo/quotes")
+async def yahoo_quotes(payload: dict[str, Any]) -> dict[str, Any]:
+    symbols = payload.get("symbols") if isinstance(payload, dict) else []
+    if not isinstance(symbols, list):
+        raise HTTPException(status_code=400, detail="symbols must be a list")
+    return await monitor.yahoo_quotes_payload(symbols)
+
+
+@app.post("/api/ingest/snapshot")
+async def ingest_snapshot(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+    if not _ingest_authorized(request):
+        raise HTTPException(status_code=401, detail="Invalid ingest token")
+    return await monitor.ingest_snapshot_payload(payload)
 
 
 @app.get("/api/history/{symbol}")
